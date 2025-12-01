@@ -28,6 +28,32 @@ Context:
 {context}
 """
 
+
+def build_source_overview(docs):
+    """Return readable labels and side panels for each retrieved chunk."""
+    source_labels = []
+    source_elements = []
+    seen_labels = set()
+
+    for doc in docs:
+        metadata = doc.metadata or {}
+        base_name = metadata.get("doc_name") or os.path.basename(metadata.get("source", "Document"))
+        chunk_index = metadata.get("chunk_index")
+        chunk_total = metadata.get("chunk_total")
+
+        if chunk_index and chunk_total:
+            label = f"{base_name} (section {chunk_index}/{chunk_total})"
+        else:
+            label = base_name
+
+        if label not in seen_labels:
+            source_labels.append(label)
+            seen_labels.add(label)
+
+        source_elements.append(cl.Text(name=label, content=doc.page_content, display="side"))
+
+    return source_labels, source_elements
+
 @cl.on_message
 async def on_message(message: cl.Message):
     question = message.content
@@ -43,5 +69,11 @@ async def on_message(message: cl.Message):
         SystemMessage(content=system_prompt), 
         HumanMessage(content=question)
     ])
-    
-    await cl.Message(content=response.content).send()
+
+    source_labels, source_elements = build_source_overview(docs)
+    sources_text = f"Sources: {', '.join(source_labels)}" if source_labels else "Sources: none"
+
+    await cl.Message(
+        content=f"{response.content}\n\n{sources_text}",
+        elements=source_elements
+    ).send()

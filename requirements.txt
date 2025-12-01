@@ -5,3 +5,5 @@ langchain-core
 langchain-openai
 langchain-text-splitters
 python-dotenv
+chromadb
+openai

@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_chroma import Chroma
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_openai import OpenAIEmbeddings
 import chainlit as cl
 import os
@@ -12,11 +12,12 @@ load_dotenv(override=True)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 MODEL = "gpt-4.1-nano"
 DB_NAME = "vector_db"
+MAX_HISTORY_MESSAGES = 8  # cap chat history to keep prompts small
 
 # Set up the key LangChain objects: retriever and llm.
 embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY, model="text-embedding-3-small")
 vectorstore = Chroma(persist_directory=DB_NAME, embedding_function=embeddings)
-retriever = vectorstore.as_retriever()
+retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 4})
 llm = ChatOpenAI(temperature=0, model_name=MODEL)
 
 SYSTEM_PROMPT_TEMPLATE = """
@@ -57,6 +58,10 @@ def build_source_overview(docs):
 @cl.on_message
 async def on_message(message: cl.Message):
     question = message.content
+    history = cl.user_session.get("chat_history")
+    if history is None:
+        history = []
+        cl.user_session.set("chat_history", history)
     
     # Retrieve context
     docs = await cl.make_async(retriever.invoke)(question)
@@ -64,11 +69,18 @@ async def on_message(message: cl.Message):
     
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(context=context_from_docs)
     
-    # Generate response
+    # Generate response with limited history to preserve conversational context
+    recent_history = history[-MAX_HISTORY_MESSAGES:]
     response = await llm.ainvoke([
-        SystemMessage(content=system_prompt), 
+        SystemMessage(content=system_prompt),
+        *recent_history,
         HumanMessage(content=question)
     ])
+
+    history.extend([HumanMessage(content=question), response])
+    if len(history) > MAX_HISTORY_MESSAGES:
+        history[:] = history[-MAX_HISTORY_MESSAGES:]
+    cl.user_session.set("chat_history", history)
 
     source_labels, source_elements = build_source_overview(docs)
     sources_text = f"Sources: {', '.join(source_labels)}" if source_labels else "Sources: none"
